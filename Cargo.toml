@@ -43,25 +43,5 @@ crossbeam-utils = { version = "0.8.18", path = "crossbeam-utils", default-featur
 [dev-dependencies]
 rand = "0.8"
 
-[lints]
-workspace = true
 
-[workspace]
-resolver = "2"
-members = [
-  ".",
-  "crossbeam-channel",
-  "crossbeam-channel/benchmarks",
-  "crossbeam-deque",
-  "crossbeam-epoch",
-  "crossbeam-queue",
-  "crossbeam-skiplist",
-  "crossbeam-utils",
-]
 
-[workspace.lints.rust]
-missing_debug_implementations = "warn"
-rust_2018_idioms = "warn"
-single_use_lifetimes = "warn"
-unreachable_pub = "warn"
-# unsafe_op_in_unsafe_fn = "warn" # Set at crate-level instead since https://github.com/rust-lang/rust/pull/100081 is not available on MSRV
