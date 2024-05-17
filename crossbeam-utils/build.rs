@@ -12,8 +12,22 @@
 
 use std::env;
 
-include!("no_atomic.rs");
-include!("build-common.rs");
+const NO_ATOMIC: &[&str] = &[
+    "bpfeb-unknown-none",
+    "bpfel-unknown-none",
+    "mipsel-sony-psx",
+    "msp430-none-elf",
+];
+
+fn convert_custom_linux_target(target: String) -> String {
+    let mut parts: Vec<&str> = target.split('-').collect();
+    let system = parts.get(2);
+    if system == Some(&"linux") {
+        parts[1] = "unknown";
+    };
+    parts.join("-")
+}
+
 
 fn main() {
     println!("cargo:rerun-if-changed=no_atomic.rs");
