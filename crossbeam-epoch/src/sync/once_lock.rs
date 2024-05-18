@@ -16,6 +16,7 @@ pub(crate) struct OnceLock<T> {
 unsafe impl<T: Sync + Send> Sync for OnceLock<T> {}
 unsafe impl<T: Send> Send for OnceLock<T> {}
 
+
 impl<T> OnceLock<T> {
     /// Creates a new empty cell.
     #[must_use]
