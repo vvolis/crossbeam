@@ -206,19 +206,11 @@ impl Backoff {
     /// [`AtomicBool`]: std::sync::atomic::AtomicBool
     #[inline]
     pub fn snooze(&self) {
-        if self.step.get() <= SPIN_LIMIT {
-            for _ in 0..1 << self.step.get() {
-                hint::spin_loop();
-            }
-        } else {
-            #[cfg(not(feature = "std"))]
-            for _ in 0..1 << self.step.get() {
-                hint::spin_loop();
-            }
 
-            #[cfg(feature = "std")]
-            ::std::thread::yield_now();
-        }
+
+        #[cfg(feature = "std")]
+        ::std::thread::yield_now();
+        
 
         if self.step.get() <= YIELD_LIMIT {
             self.step.set(self.step.get() + 1);
