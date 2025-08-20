@@ -2,3 +2,6 @@
 /crossbeam-channel/benchmarks/*.png
 target/
 Cargo.lock
+crossbeam-epoch/src/sync/once_lock.rs
+crossbeam-utils/build-common.rs
+crossbeam-utils/no_atomic.rs
