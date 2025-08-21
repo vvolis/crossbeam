@@ -2015,6 +2015,7 @@ pub struct IntoIter<K, V> {
     node: *mut Node<K, V>,
 }
 
+#[allow(dangerous_implicit_autorefs)]
 impl<K, V> Drop for IntoIter<K, V> {
     fn drop(&mut self) {
         // Iterate through the whole chain and destroy every node.
@@ -2037,6 +2038,7 @@ impl<K, V> Drop for IntoIter<K, V> {
 impl<K, V> Iterator for IntoIter<K, V> {
     type Item = (K, V);
 
+    #[allow(dangerous_implicit_autorefs)]
     fn next(&mut self) -> Option<(K, V)> {
         loop {
             // Have we reached the end of the skip list?
