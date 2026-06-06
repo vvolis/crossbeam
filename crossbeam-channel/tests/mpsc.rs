@@ -22,10 +22,11 @@
 
 #![allow(clippy::match_single_binding, clippy::redundant_clone)]
 
-use std::sync::mpsc::{RecvError, RecvTimeoutError, TryRecvError};
-use std::sync::mpsc::{SendError, TrySendError};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::{
+    sync::mpsc::{RecvError, RecvTimeoutError, SendError, TryRecvError, TrySendError},
+    thread::JoinHandle,
+    time::Duration,
+};
 
 use crossbeam_channel as cc;
 
@@ -108,7 +109,7 @@ impl<'a, T> IntoIterator for &'a Receiver<T> {
     type Item = T;
     type IntoIter = Iter<'a, T>;
 
-    fn into_iter(self) -> Iter<'a, T> {
+    fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
@@ -117,7 +118,7 @@ impl<T> IntoIterator for Receiver<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
 
-    fn into_iter(self) -> IntoIter<T> {
+    fn into_iter(self) -> Self::IntoIter {
         IntoIter { inner: self }
     }
 }
@@ -129,7 +130,7 @@ struct TryIter<'a, T> {
 impl<T> Iterator for TryIter<'_, T> {
     type Item = T;
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<Self::Item> {
         self.inner.try_recv().ok()
     }
 }
@@ -141,7 +142,7 @@ struct Iter<'a, T> {
 impl<T> Iterator for Iter<'_, T> {
     type Item = T;
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<Self::Item> {
         self.inner.recv().ok()
     }
 }
@@ -153,7 +154,7 @@ struct IntoIter<T> {
 impl<T> Iterator for IntoIter<T> {
     type Item = T;
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<Self::Item> {
         self.inner.recv().ok()
     }
 }
@@ -191,11 +192,9 @@ macro_rules! select {
 
 // Source: https://github.com/rust-lang/rust/blob/master/src/libstd/sync/mpsc/mod.rs
 mod channel_tests {
-    use super::*;
+    use std::{env, thread, time::Instant};
 
-    use std::env;
-    use std::thread;
-    use std::time::Instant;
+    use super::*;
 
     fn stress_factor() -> usize {
         match env::var("RUST_TEST_STRESS") {
@@ -318,10 +317,7 @@ mod channel_tests {
 
     #[test]
     fn stress() {
-        #[cfg(miri)]
-        const COUNT: usize = 100;
-        #[cfg(not(miri))]
-        const COUNT: usize = 10000;
+        const COUNT: usize = if cfg!(miri) { 100 } else { 10000 };
 
         let (tx, rx) = channel::<i32>();
         let t = thread::spawn(move || {
@@ -741,10 +737,7 @@ mod channel_tests {
 
     #[test]
     fn recv_a_lot() {
-        #[cfg(miri)]
-        const N: usize = 50;
-        #[cfg(not(miri))]
-        const N: usize = 10000;
+        const N: usize = if cfg!(miri) { 50 } else { 10000 };
 
         // Regression test that we don't run out of stack in scheduler context
         let (tx, rx) = channel();
@@ -967,10 +960,9 @@ mod channel_tests {
 
 // Source: https://github.com/rust-lang/rust/blob/master/src/libstd/sync/mpsc/mod.rs
 mod sync_channel_tests {
-    use super::*;
+    use std::{env, thread};
 
-    use std::env;
-    use std::thread;
+    use super::*;
 
     fn stress_factor() -> usize {
         match env::var("RUST_TEST_STRESS") {
@@ -1089,10 +1081,7 @@ mod sync_channel_tests {
 
     #[test]
     fn stress() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 10000;
+        const N: usize = if cfg!(miri) { 100 } else { 10000 };
 
         let (tx, rx) = sync_channel::<i32>(0);
         let t = thread::spawn(move || {
@@ -1108,10 +1097,7 @@ mod sync_channel_tests {
 
     #[test]
     fn stress_recv_timeout_two_threads() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 10000;
+        const N: usize = if cfg!(miri) { 100 } else { 10000 };
 
         let (tx, rx) = sync_channel::<i32>(0);
 
@@ -1139,10 +1125,7 @@ mod sync_channel_tests {
 
     #[test]
     fn stress_recv_timeout_shared() {
-        #[cfg(miri)]
-        const AMT: u32 = 100;
-        #[cfg(not(miri))]
-        const AMT: u32 = 1000;
+        const AMT: u32 = if cfg!(miri) { 100 } else { 1000 };
         const NTHREADS: u32 = 8;
         let (tx, rx) = sync_channel::<i32>(0);
         let (dtx, drx) = sync_channel::<()>(0);
@@ -1188,10 +1171,7 @@ mod sync_channel_tests {
 
     #[test]
     fn stress_shared() {
-        #[cfg(miri)]
-        const AMT: u32 = 100;
-        #[cfg(not(miri))]
-        const AMT: u32 = 1000;
+        const AMT: u32 = if cfg!(miri) { 100 } else { 1000 };
         const NTHREADS: u32 = 8;
         let (tx, rx) = sync_channel::<i32>(0);
         let (dtx, drx) = sync_channel::<()>(0);
@@ -1472,10 +1452,7 @@ mod sync_channel_tests {
 
     #[test]
     fn recv_a_lot() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 10000;
+        const N: usize = if cfg!(miri) { 100 } else { 10000 };
 
         // Regression test that we don't run out of stack in scheduler context
         let (tx, rx) = sync_channel(N);
@@ -1702,9 +1679,9 @@ mod sync_channel_tests {
 
 // Source: https://github.com/rust-lang/rust/blob/master/src/libstd/sync/mpsc/select.rs
 mod select_tests {
-    use super::*;
-
     use std::thread;
+
+    use super::*;
 
     #[test]
     fn smoke() {
@@ -1820,10 +1797,7 @@ mod select_tests {
 
     #[test]
     fn stress() {
-        #[cfg(miri)]
-        const AMT: i32 = 100;
-        #[cfg(not(miri))]
-        const AMT: i32 = 10000;
+        const AMT: i32 = if cfg!(miri) { 100 } else { 10000 };
 
         let (tx1, rx1) = channel::<i32>();
         let (tx2, rx2) = channel::<i32>();

@@ -1,11 +1,13 @@
 //! Tests for channel selection using the `Select` struct.
 
-use std::any::Any;
-use std::cell::Cell;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    any::Any,
+    cell::Cell,
+    thread,
+    time::{Duration, Instant},
+};
 
-use crossbeam_channel::{after, bounded, tick, unbounded, Receiver, Select, TryRecvError};
+use crossbeam_channel::{Receiver, Select, TryRecvError, after, bounded, tick, unbounded};
 use crossbeam_utils::thread::scope;
 
 fn ms(ms: u64) -> Duration {
@@ -313,6 +315,7 @@ fn default_when_disconnected() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn default_only() {
     let start = Instant::now();
 
@@ -416,66 +419,70 @@ fn loop_try() {
         let (s_end, r_end) = bounded::<()>(0);
 
         scope(|scope| {
-            scope.spawn(|_| loop {
-                let mut done = false;
+            scope.spawn(|_| {
+                loop {
+                    let mut done = false;
 
-                let mut sel = Select::new();
-                let oper1 = sel.send(&s1);
-                let oper = sel.try_select();
-                match oper {
-                    Err(_) => {}
-                    Ok(oper) => match oper.index() {
-                        i if i == oper1 => {
-                            let _ = oper.send(&s1, 1);
-                            done = true;
-                        }
-                        _ => unreachable!(),
-                    },
-                }
-                if done {
-                    break;
-                }
+                    let mut sel = Select::new();
+                    let oper1 = sel.send(&s1);
+                    let oper = sel.try_select();
+                    match oper {
+                        Err(_) => {}
+                        Ok(oper) => match oper.index() {
+                            i if i == oper1 => {
+                                let _ = oper.send(&s1, 1);
+                                done = true;
+                            }
+                            _ => unreachable!(),
+                        },
+                    }
+                    if done {
+                        break;
+                    }
 
-                let mut sel = Select::new();
-                let oper1 = sel.recv(&r_end);
-                let oper = sel.try_select();
-                match oper {
-                    Err(_) => {}
-                    Ok(oper) => match oper.index() {
-                        i if i == oper1 => {
-                            let _ = oper.recv(&r_end);
-                            done = true;
-                        }
-                        _ => unreachable!(),
-                    },
-                }
-                if done {
-                    break;
+                    let mut sel = Select::new();
+                    let oper1 = sel.recv(&r_end);
+                    let oper = sel.try_select();
+                    match oper {
+                        Err(_) => {}
+                        Ok(oper) => match oper.index() {
+                            i if i == oper1 => {
+                                let _ = oper.recv(&r_end);
+                                done = true;
+                            }
+                            _ => unreachable!(),
+                        },
+                    }
+                    if done {
+                        break;
+                    }
                 }
             });
 
-            scope.spawn(|_| loop {
-                if let Ok(x) = r2.try_recv() {
-                    assert_eq!(x, 2);
-                    break;
-                }
+            scope.spawn(|_| {
+                loop {
+                    if let Ok(x) = r2.try_recv() {
+                        assert_eq!(x, 2);
+                        break;
+                    }
 
-                let mut done = false;
-                let mut sel = Select::new();
-                let oper1 = sel.recv(&r_end);
-                let oper = sel.try_select();
-                match oper {
-                    Err(_) => {}
-                    Ok(oper) => match oper.index() {
-                        i if i == oper1 => {
-                            let _ = oper.recv(&r_end);
-                            done = true;
-                        }
-                        _ => unreachable!(),
-                    },
-                }
-                if done {
-                    break;
+                    let mut done = false;
+                    let mut sel = Select::new();
+                    let oper1 = sel.recv(&r_end);
+                    let oper = sel.try_select();
+                    match oper {
+                        Err(_) => {}
+                        Ok(oper) => match oper.index() {
+                            i if i == oper1 => {
+                                let _ = oper.recv(&r_end);
+                                done = true;
+                            }
+                            _ => unreachable!(),
+                        },
+                    }
+                    if done {
+                        break;
+                    }
                 }
             });
 
@@ -690,10 +697,7 @@ fn nesting() {
 
 #[test]
 fn stress_recv() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 10_000 };
 
     let (s1, r1) = unbounded();
     let (s2, r2) = bounded(5);
@@ -731,10 +735,7 @@ fn stress_recv() {
 
 #[test]
 fn stress_send() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -769,10 +770,7 @@ fn stress_send() {
 
 #[test]
 fn stress_mixed() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -949,10 +947,7 @@ fn matching_with_leftover() {
 
 #[test]
 fn channel_through_channel() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 1000 };
 
     type T = Box<dyn Any + Send>;
 
@@ -1010,10 +1005,7 @@ fn channel_through_channel() {
 
 #[test]
 fn linearizable_try() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 100_000 };
 
     for step in 0..2 {
         let (start_s, start_r) = bounded::<()>(0);
@@ -1065,10 +1057,7 @@ fn linearizable_try() {
 
 #[test]
 fn linearizable_timeout() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 100_000 };
 
     for step in 0..2 {
         let (start_s, start_r) = bounded::<()>(0);
@@ -1120,10 +1109,7 @@ fn linearizable_timeout() {
 
 #[test]
 fn fairness1() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 10_000 };
 
     let (s1, r1) = bounded::<()>(COUNT);
     let (s2, r2) = unbounded::<()>();
@@ -1169,10 +1155,7 @@ fn fairness1() {
 
 #[test]
 fn fairness2() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 10_000 };
 
     let (s1, r1) = unbounded::<()>();
     let (s2, r2) = bounded::<()>(1);
@@ -1288,10 +1271,7 @@ fn send_and_clone() {
 
 #[test]
 fn reuse() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -1321,6 +1301,64 @@ fn reuse() {
             }
             s3.send(()).unwrap();
         }
+    })
+    .unwrap();
+}
+
+// https://github.com/crossbeam-rs/crossbeam/issues/1096
+#[test]
+fn issue_1096() {
+    // unbounded recv
+    let (tx, rx) = unbounded::<u32>();
+    tx.send(123).unwrap();
+    let mut select = Select::new();
+    select.recv(&rx);
+    let operation = select.select();
+    assert_eq!(operation.recv(&rx.clone()).unwrap(), 123);
+
+    // unbounded send
+    let (tx, rx) = unbounded::<u32>();
+    let mut select = Select::new();
+    select.send(&tx);
+    let operation = select.select();
+    operation.send(&tx.clone(), 124).unwrap();
+    assert_eq!(rx.recv().unwrap(), 124);
+
+    // bounded(2) recv
+    let (tx, rx) = bounded::<u32>(2);
+    tx.send(123).unwrap();
+    let mut select = Select::new();
+    select.recv(&rx);
+    let operation = select.select();
+    assert_eq!(operation.recv(&rx.clone()).unwrap(), 123);
+
+    // bounded(2) send
+    let (tx, rx) = bounded::<u32>(2);
+    let mut select = Select::new();
+    select.send(&tx);
+    let operation = select.select();
+    operation.send(&tx.clone(), 124).unwrap();
+    assert_eq!(rx.recv().unwrap(), 124);
+
+    // zero recv
+    let (tx, rx) = bounded::<u32>(0);
+    scope(|scope| {
+        scope.spawn(|_| tx.send(123).unwrap());
+        let mut select = Select::new();
+        select.recv(&rx);
+        let operation = select.select();
+        assert_eq!(operation.recv(&rx.clone()).unwrap(), 123);
+    })
+    .unwrap();
+
+    // zero send
+    let (tx, rx) = bounded::<u32>(0);
+    scope(|scope| {
+        scope.spawn(|_| assert_eq!(rx.recv().unwrap(), 124));
+        let mut select = Select::new();
+        select.send(&tx);
+        let operation = select.select();
+        operation.send(&tx.clone(), 124).unwrap();
     })
     .unwrap();
 }

@@ -1,16 +1,17 @@
 //! Tests for the array channel flavor.
 
-use std::any::Any;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use std::thread;
-use std::time::Duration;
+use std::{
+    any::Any,
+    sync::atomic::{AtomicUsize, Ordering},
+    thread,
+    time::Duration,
+};
 
-use crossbeam_channel::{bounded, select, Receiver};
-use crossbeam_channel::{RecvError, RecvTimeoutError, TryRecvError};
-use crossbeam_channel::{SendError, SendTimeoutError, TrySendError};
+use crossbeam_channel::{
+    Receiver, RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError,
+    bounded, select,
+};
 use crossbeam_utils::thread::scope;
-use rand::{thread_rng, Rng};
 
 fn ms(ms: u64) -> Duration {
     Duration::from_millis(ms)
@@ -252,14 +253,8 @@ fn recv_after_disconnect() {
 
 #[test]
 fn len() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
-    #[cfg(miri)]
-    const CAP: usize = 50;
-    #[cfg(not(miri))]
-    const CAP: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 25_000 };
+    const CAP: usize = if cfg!(miri) { 50 } else { 1000 };
 
     let (s, r) = bounded(CAP);
 
@@ -351,10 +346,7 @@ fn disconnect_wakes_receiver() {
 
 #[test]
 fn spsc() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 100_000 };
 
     let (s, r) = bounded(3);
 
@@ -376,10 +368,7 @@ fn spsc() {
 
 #[test]
 fn mpmc() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 25_000 };
     const THREADS: usize = 4;
 
     let (s, r) = bounded::<usize>(3);
@@ -411,10 +400,7 @@ fn mpmc() {
 
 #[test]
 fn stress_oneshot() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     for _ in 0..COUNT {
         let (s, r) = bounded(1);
@@ -429,10 +415,7 @@ fn stress_oneshot() {
 
 #[test]
 fn stress_iter() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 100_000 };
 
     let (request_s, request_r) = bounded(1);
     let (response_s, response_r) = bounded(1);
@@ -499,14 +482,8 @@ fn stress_timeout_two_threads() {
 
 #[test]
 fn drops() {
-    #[cfg(miri)]
-    const RUNS: usize = 10;
-    #[cfg(not(miri))]
-    const RUNS: usize = 100;
-    #[cfg(miri)]
-    const STEPS: usize = 100;
-    #[cfg(not(miri))]
-    const STEPS: usize = 10_000;
+    const RUNS: usize = if cfg!(miri) { 10 } else { 100 };
+    const STEPS: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     static DROPS: AtomicUsize = AtomicUsize::new(0);
 
@@ -519,11 +496,11 @@ fn drops() {
         }
     }
 
-    let mut rng = thread_rng();
+    let mut rng = fastrand::Rng::new();
 
     for _ in 0..RUNS {
-        let steps = rng.gen_range(0..STEPS);
-        let additional = rng.gen_range(0..50);
+        let steps = rng.usize(0..STEPS);
+        let additional = rng.usize(0..50);
 
         DROPS.store(0, Ordering::SeqCst);
         let (s, r) = bounded::<DropCounter>(50);
@@ -556,10 +533,7 @@ fn drops() {
 
 #[test]
 fn linearizable() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 25_000 };
     const THREADS: usize = 4;
 
     let (s, r) = bounded(THREADS);
@@ -579,10 +553,7 @@ fn linearizable() {
 
 #[test]
 fn fairness() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded::<()>(COUNT);
     let (s2, r2) = bounded::<()>(COUNT);
@@ -604,10 +575,7 @@ fn fairness() {
 
 #[test]
 fn fairness_duplicates() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s, r) = bounded::<()>(COUNT);
 
@@ -651,10 +619,7 @@ fn recv_in_send() {
 
 #[test]
 fn channel_through_channel() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 1000 };
 
     type T = Box<dyn Any + Send>;
 

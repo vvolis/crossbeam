@@ -1,12 +1,15 @@
 //! Tests for channel readiness using the `Select` struct.
 
-use std::any::Any;
-use std::cell::Cell;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    any::Any,
+    cell::Cell,
+    thread,
+    time::{Duration, Instant},
+};
 
-use crossbeam_channel::{after, bounded, tick, unbounded};
-use crossbeam_channel::{Receiver, Select, TryRecvError, TrySendError};
+use crossbeam_channel::{
+    Receiver, Select, TryRecvError, TrySendError, after, bounded, tick, unbounded,
+};
 use crossbeam_utils::thread::scope;
 
 fn ms(ms: u64) -> Duration {
@@ -228,6 +231,7 @@ fn default_when_disconnected() {
 
 #[test]
 #[cfg_attr(miri, ignore)] // this test makes timing assumptions, but Miri is so slow it violates them
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn default_only() {
     let start = Instant::now();
 
@@ -491,10 +495,7 @@ fn nesting() {
 
 #[test]
 fn stress_recv() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = unbounded();
     let (s2, r2) = bounded(5);
@@ -531,10 +532,7 @@ fn stress_recv() {
 
 #[test]
 fn stress_send() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -568,10 +566,7 @@ fn stress_send() {
 
 #[test]
 fn stress_mixed() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -676,10 +671,7 @@ fn send_recv_same_channel() {
 
 #[test]
 fn channel_through_channel() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 1000 };
 
     type T = Box<dyn Any + Send>;
 
@@ -735,10 +727,7 @@ fn channel_through_channel() {
 
 #[test]
 fn fairness1() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded::<()>(COUNT);
     let (s2, r2) = unbounded::<()>();
@@ -783,10 +772,7 @@ fn fairness1() {
 
 #[test]
 fn fairness2() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 100_000 };
 
     let (s1, r1) = unbounded::<()>();
     let (s2, r2) = bounded::<()>(1);

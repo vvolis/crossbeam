@@ -1,16 +1,19 @@
 // Necessary for implementing atomic methods for `AtomicUnit`
 #![allow(clippy::unit_arg)]
 
-use crate::primitive::sync::atomic::{self, Ordering};
-use crate::CachePadded;
-use core::cell::UnsafeCell;
-use core::cmp;
-use core::fmt;
-use core::mem::{self, ManuallyDrop, MaybeUninit};
-use core::panic::{RefUnwindSafe, UnwindSafe};
-use core::ptr;
+use core::{
+    cell::UnsafeCell,
+    cmp, fmt,
+    mem::{self, ManuallyDrop, MaybeUninit},
+    panic::{RefUnwindSafe, UnwindSafe},
+    ptr,
+};
 
 use super::seq_lock::SeqLock;
+use crate::{
+    CachePadded,
+    primitive::sync::atomic::{self, Ordering},
+};
 
 /// A thread-safe mutable memory location.
 ///
@@ -36,6 +39,7 @@ pub struct AtomicCell<T> {
     ///
     /// Using MaybeUninit to prevent code outside the cell from observing partially initialized state:
     /// <https://github.com/crossbeam-rs/crossbeam/issues/833>
+    /// (This rustc bug has been fixed in Rust 1.64.)
     ///
     /// Note:
     /// - we'll never store uninitialized `T` due to our API only using initialized `T`.
@@ -80,14 +84,46 @@ impl<T> AtomicCell<T> {
     ///
     /// assert_eq!(v, 7);
     /// ```
-    pub fn into_inner(self) -> T {
-        let this = ManuallyDrop::new(self);
+    pub const fn into_inner(self) -> T {
+        // HACK: This is equivalent to transmute_copy by value, but available in const
+        // context even on older rustc (const transmute_copy requires Rust 1.74), and
+        // can work around "cannot borrow here, since the borrowed element may contain
+        // interior mutability" error occurs (until const_refs_to_cell stabilized, i.e.,
+        // Rust 1.83) when using transmute_copy with generic type in const context
+        // (because this is a by-value transmutation that doesn't create a reference to
+        // the source value).
+        /// # Safety
+        ///
+        /// This function has the same safety requirements as [`core::mem::transmute_copy`].
+        ///
+        /// Since this is a by-value transmutation, it copies the bits from the source value
+        /// into the destination value, then forgets the original, as with the [`core::mem::transmute`].
+        #[inline]
+        #[must_use]
+        const unsafe fn transmute_copy_by_val<Src, Dst>(src: Src) -> Dst {
+            #[repr(C)]
+            union ConstHack<Src, Dst> {
+                src: ManuallyDrop<Src>,
+                dst: ManuallyDrop<Dst>,
+            }
+            assert!(mem::size_of::<Src>() >= mem::size_of::<Dst>()); // assertion copied from transmute_copy
+            // SAFETY: ConstHack is #[repr(C)] union, and the caller must guarantee that
+            // transmuting Src to Dst is safe.
+            ManuallyDrop::into_inner(unsafe {
+                ConstHack::<Src, Dst> {
+                    src: ManuallyDrop::new(src),
+                }
+                .dst
+            })
+        }
+
         // SAFETY:
+        // - Self is repr(transparent) over `UnsafeCell<MaybeUninit<T>>` and
+        //   `UnsafeCell<MaybeUninit<T>>` and `T` has the same layout.
         // - passing `self` by value guarantees that no other threads are concurrently
         //   accessing the atomic data
-        // - the raw pointer passed in is valid because we got it from an owned value.
-        // - `ManuallyDrop` prevents double dropping `T`
-        unsafe { this.as_ptr().read() }
+        // (Equivalent to UnsafeCell::into_inner which is unstable in const context.)
+        unsafe { transmute_copy_by_val(self) }
     }
 
     /// Returns `true` if operations on values of this type are lock-free.
@@ -98,6 +134,9 @@ impl<T> AtomicCell<T> {
     /// # Examples
     ///
     /// ```
+    /// # // Always use fallback for now on environments that do not support inline assembly.
+    /// # if cfg!(any(miri, crossbeam_loom, crossbeam_atomic_cell_force_fallback)) { return; }
+    /// # atomic_maybe_uninit::cfg_no_atomic_cas! { if true { return; } }
     /// use crossbeam_utils::atomic::AtomicCell;
     ///
     /// // This type is internally represented as `AtomicUsize` so we can just use atomic
@@ -174,7 +213,7 @@ impl<T> AtomicCell<T> {
     /// let ptr = a.as_ptr();
     /// ```
     #[inline]
-    pub fn as_ptr(&self) -> *mut T {
+    pub const fn as_ptr(&self) -> *mut T {
         self.value.get().cast::<T>()
     }
 }
@@ -306,13 +345,29 @@ macro_rules! atomic {
         loop {
             atomic!(@check, $t, AtomicUnit, $a, $atomic_op);
 
-            atomic!(@check, $t, atomic::AtomicU8, $a, $atomic_op);
-            atomic!(@check, $t, atomic::AtomicU16, $a, $atomic_op);
-            atomic!(@check, $t, atomic::AtomicU32, $a, $atomic_op);
-            #[cfg(target_has_atomic = "64")]
-            atomic!(@check, $t, atomic::AtomicU64, $a, $atomic_op);
-            // TODO: AtomicU128 is unstable
-            // atomic!(@check, $t, atomic::AtomicU128, $a, $atomic_op);
+            // Always use fallback for now on environments that do not support inline assembly.
+            #[cfg(not(any(
+                miri,
+                crossbeam_loom,
+                crossbeam_atomic_cell_force_fallback,
+            )))]
+            atomic_maybe_uninit::cfg_has_atomic_cas! {
+                atomic_maybe_uninit::cfg_has_atomic_8! {
+                    atomic!(@check, $t, atomic_maybe_uninit::AtomicMaybeUninit<u8>, $a, $atomic_op);
+                }
+                atomic_maybe_uninit::cfg_has_atomic_16! {
+                    atomic!(@check, $t, atomic_maybe_uninit::AtomicMaybeUninit<u16>, $a, $atomic_op);
+                }
+                atomic_maybe_uninit::cfg_has_atomic_32! {
+                    atomic!(@check, $t, atomic_maybe_uninit::AtomicMaybeUninit<u32>, $a, $atomic_op);
+                }
+                atomic_maybe_uninit::cfg_has_atomic_64! {
+                    atomic!(@check, $t, atomic_maybe_uninit::AtomicMaybeUninit<u64>, $a, $atomic_op);
+                }
+                atomic_maybe_uninit::cfg_has_atomic_128! {
+                    atomic!(@check, $t, atomic_maybe_uninit::AtomicMaybeUninit<u128>, $a, $atomic_op);
+                }
+            }
 
             break $fallback_op;
         }
@@ -320,184 +375,7 @@ macro_rules! atomic {
 }
 
 macro_rules! impl_arithmetic {
-    ($t:ty, fallback, $example:tt) => {
-        impl AtomicCell<$t> {
-            /// Increments the current value by `val` and returns the previous value.
-            ///
-            /// The addition wraps on overflow.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_add(3), 7);
-            /// assert_eq!(a.load(), 10);
-            /// ```
-            #[inline]
-            pub fn fetch_add(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value = value.wrapping_add(val);
-                old
-            }
-
-            /// Decrements the current value by `val` and returns the previous value.
-            ///
-            /// The subtraction wraps on overflow.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_sub(3), 7);
-            /// assert_eq!(a.load(), 4);
-            /// ```
-            #[inline]
-            pub fn fetch_sub(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value = value.wrapping_sub(val);
-                old
-            }
-
-            /// Applies bitwise "and" to the current value and returns the previous value.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_and(3), 7);
-            /// assert_eq!(a.load(), 3);
-            /// ```
-            #[inline]
-            pub fn fetch_and(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value &= val;
-                old
-            }
-
-            /// Applies bitwise "nand" to the current value and returns the previous value.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_nand(3), 7);
-            /// assert_eq!(a.load(), !(7 & 3));
-            /// ```
-            #[inline]
-            pub fn fetch_nand(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value = !(old & val);
-                old
-            }
-
-            /// Applies bitwise "or" to the current value and returns the previous value.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_or(16), 7);
-            /// assert_eq!(a.load(), 23);
-            /// ```
-            #[inline]
-            pub fn fetch_or(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value |= val;
-                old
-            }
-
-            /// Applies bitwise "xor" to the current value and returns the previous value.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_xor(2), 7);
-            /// assert_eq!(a.load(), 5);
-            /// ```
-            #[inline]
-            pub fn fetch_xor(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value ^= val;
-                old
-            }
-
-            /// Compares and sets the maximum of the current value and `val`,
-            /// and returns the previous value.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_max(2), 7);
-            /// assert_eq!(a.load(), 7);
-            /// ```
-            #[inline]
-            pub fn fetch_max(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value = cmp::max(old, val);
-                old
-            }
-
-            /// Compares and sets the minimum of the current value and `val`,
-            /// and returns the previous value.
-            ///
-            /// # Examples
-            ///
-            /// ```
-            /// use crossbeam_utils::atomic::AtomicCell;
-            ///
-            #[doc = $example]
-            ///
-            /// assert_eq!(a.fetch_min(2), 7);
-            /// assert_eq!(a.load(), 2);
-            /// ```
-            #[inline]
-            pub fn fetch_min(&self, val: $t) -> $t {
-                let _guard = lock(self.as_ptr() as usize).write();
-                let value = unsafe { &mut *(self.as_ptr()) };
-                let old = *value;
-                *value = cmp::min(old, val);
-                old
-            }
-        }
-    };
-    ($t:ty, $atomic:ident, $example:tt) => {
+    ($t:ty, #[cfg($target_has_atomic:meta)] $atomic:ident, $example:tt) => {
         impl AtomicCell<$t> {
             /// Increments the current value by `val` and returns the previous value.
             ///
@@ -518,8 +396,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_add(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_add(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(old.wrapping_add(val))).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -550,8 +435,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_sub(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_sub(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(old.wrapping_sub(val))).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -580,8 +472,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_and(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_and(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(old & val)).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -610,8 +509,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_nand(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_nand(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(!(old & val))).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -640,8 +546,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_or(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_or(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(old | val)).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -670,8 +583,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_xor(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_xor(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(old ^ val)).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -701,8 +621,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_max(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_max(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(cmp::max(old, val))).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -732,8 +659,15 @@ macro_rules! impl_arithmetic {
                 atomic! {
                     $t, _a,
                     {
-                        let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
-                        a.fetch_min(val, Ordering::AcqRel)
+                        #[cfg($target_has_atomic)]
+                        {
+                            let a = unsafe { &*(self.as_ptr() as *const atomic::$atomic) };
+                            a.fetch_min(val, Ordering::AcqRel)
+                        }
+                        #[cfg(not($target_has_atomic))]
+                        {
+                            self.fetch_update(|old| Some(cmp::min(old, val))).unwrap()
+                        }
                     },
                     {
                         let _guard = lock(self.as_ptr() as usize).write();
@@ -748,31 +682,83 @@ macro_rules! impl_arithmetic {
     };
 }
 
-impl_arithmetic!(u8, AtomicU8, "let a = AtomicCell::new(7u8);");
-impl_arithmetic!(i8, AtomicI8, "let a = AtomicCell::new(7i8);");
-impl_arithmetic!(u16, AtomicU16, "let a = AtomicCell::new(7u16);");
-impl_arithmetic!(i16, AtomicI16, "let a = AtomicCell::new(7i16);");
+impl_arithmetic!(
+    u8,
+    #[cfg(target_has_atomic = "8")]
+    AtomicU8,
+    "let a = AtomicCell::new(7u8);"
+);
+impl_arithmetic!(
+    i8,
+    #[cfg(target_has_atomic = "8")]
+    AtomicI8,
+    "let a = AtomicCell::new(7i8);"
+);
+impl_arithmetic!(
+    u16,
+    #[cfg(target_has_atomic = "16")]
+    AtomicU16,
+    "let a = AtomicCell::new(7u16);"
+);
+impl_arithmetic!(
+    i16,
+    #[cfg(target_has_atomic = "16")]
+    AtomicI16,
+    "let a = AtomicCell::new(7i16);"
+);
 
-impl_arithmetic!(u32, AtomicU32, "let a = AtomicCell::new(7u32);");
-impl_arithmetic!(i32, AtomicI32, "let a = AtomicCell::new(7i32);");
+impl_arithmetic!(
+    u32,
+    #[cfg(target_has_atomic = "32")]
+    AtomicU32,
+    "let a = AtomicCell::new(7u32);"
+);
+impl_arithmetic!(
+    i32,
+    #[cfg(target_has_atomic = "32")]
+    AtomicI32,
+    "let a = AtomicCell::new(7i32);"
+);
 
-#[cfg(target_has_atomic = "64")]
-impl_arithmetic!(u64, AtomicU64, "let a = AtomicCell::new(7u64);");
-#[cfg(target_has_atomic = "64")]
-impl_arithmetic!(i64, AtomicI64, "let a = AtomicCell::new(7i64);");
-#[cfg(not(target_has_atomic = "64"))]
-impl_arithmetic!(u64, fallback, "let a = AtomicCell::new(7u64);");
-#[cfg(not(target_has_atomic = "64"))]
-impl_arithmetic!(i64, fallback, "let a = AtomicCell::new(7i64);");
+impl_arithmetic!(
+    u64,
+    #[cfg(target_has_atomic = "64")]
+    AtomicU64,
+    "let a = AtomicCell::new(7u64);"
+);
+impl_arithmetic!(
+    i64,
+    #[cfg(target_has_atomic = "64")]
+    AtomicI64,
+    "let a = AtomicCell::new(7i64);"
+);
 
-// TODO: AtomicU128 is unstable
-// impl_arithmetic!(u128, AtomicU128, "let a = AtomicCell::new(7u128);");
-// impl_arithmetic!(i128, AtomicI128, "let a = AtomicCell::new(7i128);");
-impl_arithmetic!(u128, fallback, "let a = AtomicCell::new(7u128);");
-impl_arithmetic!(i128, fallback, "let a = AtomicCell::new(7i128);");
+// TODO: core::sync::atomic::AtomicU128 is unstable
+impl_arithmetic!(
+    u128,
+    #[cfg(any(/* always false */))]
+    AtomicU128,
+    "let a = AtomicCell::new(7u128);"
+);
+impl_arithmetic!(
+    i128,
+    #[cfg(any(/* always false */))]
+    AtomicI128,
+    "let a = AtomicCell::new(7i128);"
+);
 
-impl_arithmetic!(usize, AtomicUsize, "let a = AtomicCell::new(7usize);");
-impl_arithmetic!(isize, AtomicIsize, "let a = AtomicCell::new(7isize);");
+impl_arithmetic!(
+    usize,
+    #[cfg(target_has_atomic = "ptr")]
+    AtomicUsize,
+    "let a = AtomicCell::new(7usize);"
+);
+impl_arithmetic!(
+    isize,
+    #[cfg(target_has_atomic = "ptr")]
+    AtomicIsize,
+    "let a = AtomicCell::new(7isize);"
+);
 
 impl AtomicCell<bool> {
     /// Applies logical "and" to the current value and returns the previous value.
@@ -795,8 +781,15 @@ impl AtomicCell<bool> {
         atomic! {
             bool, _a,
             {
-                let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
-                a.fetch_and(val, Ordering::AcqRel)
+                #[cfg(target_has_atomic = "8")]
+                {
+                    let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
+                    a.fetch_and(val, Ordering::AcqRel)
+                }
+                #[cfg(not(target_has_atomic = "8"))]
+                {
+                    self.fetch_update(|old| Some(old & val)).unwrap()
+                }
             },
             {
                 let _guard = lock(self.as_ptr() as usize).write();
@@ -831,8 +824,15 @@ impl AtomicCell<bool> {
         atomic! {
             bool, _a,
             {
-                let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
-                a.fetch_nand(val, Ordering::AcqRel)
+                #[cfg(target_has_atomic = "8")]
+                {
+                    let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
+                    a.fetch_nand(val, Ordering::AcqRel)
+                }
+                #[cfg(not(target_has_atomic = "8"))]
+                {
+                    self.fetch_update(|old| Some(!(old & val))).unwrap()
+                }
             },
             {
                 let _guard = lock(self.as_ptr() as usize).write();
@@ -864,8 +864,15 @@ impl AtomicCell<bool> {
         atomic! {
             bool, _a,
             {
-                let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
-                a.fetch_or(val, Ordering::AcqRel)
+                #[cfg(target_has_atomic = "8")]
+                {
+                    let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
+                    a.fetch_or(val, Ordering::AcqRel)
+                }
+                #[cfg(not(target_has_atomic = "8"))]
+                {
+                    self.fetch_update(|old| Some(old | val)).unwrap()
+                }
             },
             {
                 let _guard = lock(self.as_ptr() as usize).write();
@@ -897,8 +904,15 @@ impl AtomicCell<bool> {
         atomic! {
             bool, _a,
             {
-                let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
-                a.fetch_xor(val, Ordering::AcqRel)
+                #[cfg(target_has_atomic = "8")]
+                {
+                    let a = unsafe { &*(self.as_ptr() as *const atomic::AtomicBool) };
+                    a.fetch_xor(val, Ordering::AcqRel)
+                }
+                #[cfg(not(target_has_atomic = "8"))]
+                {
+                    self.fetch_update(|old| Some(old ^ val)).unwrap()
+                }
             },
             {
                 let _guard = lock(self.as_ptr() as usize).write();

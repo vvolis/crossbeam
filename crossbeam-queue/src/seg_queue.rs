@@ -1,13 +1,18 @@
-use alloc::boxed::Box;
-use core::cell::UnsafeCell;
-use core::fmt;
-use core::marker::PhantomData;
-use core::mem::MaybeUninit;
-use core::panic::{RefUnwindSafe, UnwindSafe};
-use core::ptr;
-use core::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
+use alloc::{alloc::handle_alloc_error, boxed::Box};
+use core::{
+    alloc::Layout,
+    cell::UnsafeCell,
+    fmt,
+    marker::PhantomData,
+    mem::MaybeUninit,
+    panic::{RefUnwindSafe, UnwindSafe},
+    ptr,
+    sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering},
+};
 
 use crossbeam_utils::{Backoff, CachePadded};
+
+use crate::alloc_helper::Global;
 
 // Bits indicating the state of a slot:
 // * If a value has been written into the slot, `WRITE` is set.
@@ -36,11 +41,6 @@ struct Slot<T> {
 }
 
 impl<T> Slot<T> {
-    const UNINIT: Self = Self {
-        value: UnsafeCell::new(MaybeUninit::uninit()),
-        state: AtomicUsize::new(0),
-    };
-
     /// Waits until a value is written into the slot.
     fn wait_write(&self) {
         let backoff = Backoff::new();
@@ -62,11 +62,30 @@ struct Block<T> {
 }
 
 impl<T> Block<T> {
-    /// Creates an empty block that starts at `start_index`.
-    fn new() -> Self {
-        Self {
-            next: AtomicPtr::new(ptr::null_mut()),
-            slots: [Slot::UNINIT; BLOCK_CAP],
+    const LAYOUT: Layout = {
+        let layout = Layout::new::<Self>();
+        assert!(
+            layout.size() != 0,
+            "Block should never be zero-sized, as it has an AtomicPtr field"
+        );
+        layout
+    };
+
+    /// Creates an empty block.
+    fn new() -> Box<Self> {
+        // unsafe { Box::new_zeroed().assume_init() } requires Rust 1.92
+        match Global.allocate_zeroed(Self::LAYOUT) {
+            Some(ptr) => {
+                // SAFETY: This is safe because:
+                //  [1] `Block::next` (AtomicPtr) may be safely zero initialized.
+                //  [2] `Block::slots` (Array) may be safely zero initialized because of [3, 4].
+                //  [3] `Slot::value` (UnsafeCell) may be safely zero initialized because it
+                //       holds a MaybeUninit.
+                //  [4] `Slot::state` (AtomicUsize) may be safely zero initialized.
+                unsafe { Box::from_raw(ptr.as_ptr().cast()) }
+            }
+            // Handle allocation failure
+            None => handle_alloc_error(Self::LAYOUT),
         }
     }
 
@@ -97,8 +116,12 @@ impl<T> Block<T> {
                 return;
             }
         }
-
         // No thread is using the block, now it is safe to destroy it.
+        drop(unsafe { Box::from_raw(this) });
+    }
+
+    /// Destroys the block. Only safe to call with exclusive access, when no other thread is using it.
+    unsafe fn destroy_mut(this: *mut Self) {
         drop(unsafe { Box::from_raw(this) });
     }
 }
@@ -209,12 +232,12 @@ impl<T> SegQueue<T> {
             // If we're going to have to install the next block, allocate it in advance in order to
             // make the wait for other threads as short as possible.
             if offset + 1 == BLOCK_CAP && next_block.is_none() {
-                next_block = Some(Box::new(Block::<T>::new()));
+                next_block = Some(Block::<T>::new());
             }
 
             // If this is the first push operation, we need to allocate the first block.
             if block.is_null() {
-                let new = Box::into_raw(Box::new(Block::<T>::new()));
+                let new = Box::into_raw(Block::<T>::new());
 
                 if self
                     .tail
@@ -265,6 +288,59 @@ impl<T> SegQueue<T> {
                     backoff.spin();
                 }
             }
+        }
+    }
+
+    /// Pushes an element to the queue with exclusive mutable access.
+    ///
+    /// Avoids atomic operations and synchronization, assuming
+    /// no other threads access the queue concurrently.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_queue::SegQueue;
+    ///
+    /// let mut q = SegQueue::new();
+    ///
+    /// q.push_mut(10);
+    /// q.push_mut(20);
+    /// ```
+    pub fn push_mut(&mut self, value: T) {
+        let tail = *self.tail.index.get_mut();
+        let mut block = *self.tail.block.get_mut();
+
+        // Calculate the offset of the index into the block.
+        let offset = (tail >> SHIFT) % LAP;
+
+        // If this is the first push operation, we need to allocate the first block.
+        if block.is_null() {
+            let new = Box::into_raw(Block::<T>::new());
+            *self.head.block.get_mut() = new;
+            *self.tail.block.get_mut() = new;
+
+            block = new;
+        }
+
+        let new_tail = tail + (1 << SHIFT);
+
+        *self.tail.index.get_mut() = new_tail;
+
+        unsafe {
+            // If we've reached the end of the block, install the next one.
+            if offset + 1 == BLOCK_CAP {
+                let next_block = Box::into_raw(Block::<T>::new());
+                let next_index = new_tail.wrapping_add(1 << SHIFT);
+
+                *self.tail.block.get_mut() = next_block;
+                *self.tail.index.get_mut() = next_index;
+                *(*block).next.get_mut() = next_block;
+            }
+
+            // Write the value into the slot.
+            let slot = (*block).slots.get_unchecked(offset);
+            slot.value.get().write(MaybeUninit::new(value));
+            *(*block).slots.get_unchecked_mut(offset).state.get_mut() |= WRITE;
         }
     }
 
@@ -369,6 +445,83 @@ impl<T> SegQueue<T> {
                     backoff.spin();
                 }
             }
+        }
+    }
+
+    /// Pops the head element from the queue using an exclusive reference.
+    ///
+    /// Avoids atomic operations and synchronization, assuming
+    /// no other threads access the queue concurrently.
+    ///
+    /// If the queue is empty, `None` is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_queue::SegQueue;
+    ///
+    /// let mut q = SegQueue::new();
+    ///
+    /// q.push(10);
+    /// q.push(20);
+    /// assert_eq!(q.pop_mut(), Some(10));
+    /// assert_eq!(q.pop_mut(), Some(20));
+    /// assert!(q.pop_mut().is_none());
+    /// ```
+    pub fn pop_mut(&mut self) -> Option<T> {
+        let head = *self.head.index.get_mut();
+        let block = *self.head.block.get_mut();
+
+        // Calculate the offset of the index into the block.
+        let offset = (head >> SHIFT) % LAP;
+
+        let mut new_head = head + (1 << SHIFT);
+
+        if new_head & HAS_NEXT == 0 {
+            let tail = *self.tail.index.get_mut();
+
+            // If the tail equals the head, that means the queue is empty.
+            if head >> SHIFT == tail >> SHIFT {
+                return None;
+            }
+
+            // If head and tail are not in the same block, set `HAS_NEXT` in head.
+            if (head >> SHIFT) / LAP != (tail >> SHIFT) / LAP {
+                new_head |= HAS_NEXT;
+            }
+        }
+
+        *self.head.index.get_mut() = new_head;
+
+        unsafe {
+            // If we've reached the end of the block, move to the next one.
+            if offset + 1 == BLOCK_CAP {
+                let next = *(*block).next.get_mut();
+                let mut next_index = (new_head & !HAS_NEXT).wrapping_add(1 << SHIFT);
+                if !(*next).next.get_mut().is_null() {
+                    next_index |= HAS_NEXT;
+                }
+
+                *self.head.block.get_mut() = next;
+                *self.head.index.get_mut() = next_index;
+            }
+
+            // Read the value.
+            let slot = (*block).slots.get_unchecked(offset);
+            let value = slot.value.get().read().assume_init();
+
+            // Destroy the block if we've reached the end
+            if offset + 1 == BLOCK_CAP {
+                Block::destroy_mut(block);
+            } else {
+                let state = *(*block).slots.get_unchecked_mut(offset).state.get_mut();
+                *(*block).slots.get_unchecked_mut(offset).state.get_mut() = state | READ;
+                if state & DESTROY != 0 {
+                    Block::destroy(block, offset + 1);
+                }
+            }
+
+            Some(value)
         }
     }
 

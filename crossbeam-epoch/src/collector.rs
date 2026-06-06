@@ -14,9 +14,11 @@
 /// ```
 use core::fmt;
 
-use crate::guard::Guard;
-use crate::internal::{Global, Local};
-use crate::primitive::sync::Arc;
+use crate::{
+    guard::Guard,
+    internal::{Global, Local},
+    primitive::sync::Arc,
+};
 
 /// An epoch-based garbage collector.
 pub struct Collector {
@@ -111,10 +113,17 @@ impl fmt::Debug for LocalHandle {
 }
 
 #[cfg(all(test, not(crossbeam_loom)))]
+#[allow(
+    clippy::alloc_instead_of_core,
+    clippy::std_instead_of_alloc,
+    clippy::std_instead_of_core
+)]
 mod tests {
-    use std::mem::ManuallyDrop;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::vec::Vec;
+    use std::{
+        mem::ManuallyDrop,
+        sync::atomic::{AtomicUsize, Ordering},
+        vec::Vec,
+    };
 
     use crossbeam_utils::thread;
 
@@ -180,10 +189,7 @@ mod tests {
 
     #[test]
     fn pin_holds_advance() {
-        #[cfg(miri)]
-        const N: usize = 500;
-        #[cfg(not(miri))]
-        const N: usize = 500_000;
+        const N: usize = if cfg!(miri) { 500 } else { 500_000 };
 
         let collector = Collector::new();
 
@@ -206,13 +212,11 @@ mod tests {
         .unwrap();
     }
 
-    #[cfg(not(crossbeam_sanitize))] // TODO: assertions failed due to `cfg(crossbeam_sanitize)` reduce `internal::MAX_OBJECTS`
     #[test]
+    // TODO: assertions failed due to `cfg(crossbeam_sanitize)` reduce `internal::MAX_OBJECTS`: https://github.com/crossbeam-rs/crossbeam/issues/662
+    #[cfg_attr(crossbeam_sanitize, ignore)]
     fn incremental() {
-        #[cfg(miri)]
-        const COUNT: usize = 500;
-        #[cfg(not(miri))]
-        const COUNT: usize = 100_000;
+        const COUNT: usize = if cfg!(miri) { 500 } else { 100_000 };
         static DESTROYS: AtomicUsize = AtomicUsize::new(0);
 
         let collector = Collector::new();
@@ -246,10 +250,7 @@ mod tests {
     #[test]
     fn buffering() {
         const COUNT: usize = 10;
-        #[cfg(miri)]
-        const N: usize = 500;
-        #[cfg(not(miri))]
-        const N: usize = 100_000;
+        const N: usize = if cfg!(miri) { 500 } else { 100_000 };
         static DESTROYS: AtomicUsize = AtomicUsize::new(0);
 
         let collector = Collector::new();
@@ -282,10 +283,7 @@ mod tests {
 
     #[test]
     fn count_drops() {
-        #[cfg(miri)]
-        const COUNT: usize = 500;
-        #[cfg(not(miri))]
-        const COUNT: usize = 100_000;
+        const COUNT: usize = if cfg!(miri) { 500 } else { 100_000 };
         static DROPS: AtomicUsize = AtomicUsize::new(0);
 
         struct Elem(#[allow(dead_code)] i32);
@@ -318,10 +316,7 @@ mod tests {
 
     #[test]
     fn count_destroy() {
-        #[cfg(miri)]
-        const COUNT: usize = 500;
-        #[cfg(not(miri))]
-        const COUNT: usize = 100_000;
+        const COUNT: usize = if cfg!(miri) { 500 } else { 100_000 };
         static DESTROYS: AtomicUsize = AtomicUsize::new(0);
 
         let collector = Collector::new();
@@ -387,10 +382,7 @@ mod tests {
 
     #[test]
     fn destroy_array() {
-        #[cfg(miri)]
-        const COUNT: usize = 500;
-        #[cfg(not(miri))]
-        const COUNT: usize = 100_000;
+        const COUNT: usize = if cfg!(miri) { 500 } else { 100_000 };
         static DESTROYS: AtomicUsize = AtomicUsize::new(0);
 
         let collector = Collector::new();
@@ -424,10 +416,7 @@ mod tests {
     #[test]
     fn stress() {
         const THREADS: usize = 8;
-        #[cfg(miri)]
-        const COUNT: usize = 500;
-        #[cfg(not(miri))]
-        const COUNT: usize = 100_000;
+        const COUNT: usize = if cfg!(miri) { 500 } else { 100_000 };
         static DROPS: AtomicUsize = AtomicUsize::new(0);
 
         struct Elem(#[allow(dead_code)] i32);

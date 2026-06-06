@@ -1,7 +1,9 @@
 //! Tests for the never channel flavor.
 
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use crossbeam_channel::{never, select, tick, unbounded};
 
@@ -79,6 +81,7 @@ fn try_recv() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn recv_timeout() {
     let start = Instant::now();
     let r = never::<i32>();

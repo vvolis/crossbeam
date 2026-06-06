@@ -1,11 +1,15 @@
 //! Thread-local context used in select.
 
-use std::cell::Cell;
-use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::thread::{self, Thread, ThreadId};
-use std::time::Instant;
+use alloc::sync::Arc;
+use core::{
+    cell::Cell,
+    ptr,
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+};
+use std::{
+    thread::{self, Thread, ThreadId},
+    time::Instant,
+};
 
 use crossbeam_utils::Backoff;
 
@@ -138,21 +142,6 @@ impl Context {
     /// If the deadline is reached, `Selected::Aborted` will be selected.
     #[inline]
     pub fn wait_until(&self, deadline: Option<Instant>) -> Selected {
-        // Spin for a short time, waiting until an operation is selected.
-        let backoff = Backoff::new();
-        loop {
-            let sel = Selected::from(self.inner.select.load(Ordering::Acquire));
-            if sel != Selected::Waiting {
-                return sel;
-            }
-
-            if backoff.is_completed() {
-                break;
-            } else {
-                backoff.snooze();
-            }
-        }
-
         loop {
             // Check whether an operation has been selected.
             let sel = Selected::from(self.inner.select.load(Ordering::Acquire));

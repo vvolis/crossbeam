@@ -112,7 +112,7 @@
 //!
 //! What happens here? If the map implementation frees the memory
 //! belonging to a value when it is
-//! removed, then a user-after-free occurs, resulting in memory corruption.
+//! removed, then a use-after-free occurs, resulting in memory corruption.
 //!
 //! To solve the above, this crate uses the _epoch-based memory reclamation_ mechanism
 //! implemented in [`crossbeam-epoch`]. Simplified, a value removed from the map
@@ -231,12 +231,15 @@
 #![no_std]
 #![doc(test(
     no_crate_inject,
-    attr(
-        deny(warnings, rust_2018_idioms, single_use_lifetimes),
-        allow(dead_code, unused_assignments, unused_variables)
-    )
+    attr(allow(dead_code, unused_assignments, unused_variables))
 ))]
-#![warn(missing_docs, unsafe_op_in_unsafe_fn)]
+#![warn(
+    missing_docs,
+    unsafe_op_in_unsafe_fn,
+    clippy::alloc_instead_of_core,
+    clippy::std_instead_of_alloc,
+    clippy::std_instead_of_core
+)]
 
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 extern crate alloc;
@@ -244,7 +247,11 @@ extern crate alloc;
 extern crate std;
 
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
+mod alloc_helper;
+
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 pub mod base;
+
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 #[doc(inline)]
 pub use crate::base::SkipList;
@@ -257,3 +264,6 @@ pub mod set;
 #[cfg(feature = "std")]
 #[doc(inline)]
 pub use crate::{map::SkipMap, set::SkipSet};
+
+pub mod comparator;
+pub mod equivalent;

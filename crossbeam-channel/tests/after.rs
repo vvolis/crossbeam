@@ -2,12 +2,13 @@
 
 #![cfg(not(miri))] // TODO: many assertions failed due to Miri is slow
 
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    thread,
+    time::{Duration, Instant},
+};
 
-use crossbeam_channel::{after, select, Select, TryRecvError};
+use crossbeam_channel::{Select, TryRecvError, after, select};
 use crossbeam_utils::thread::scope;
 
 fn ms(ms: u64) -> Duration {
@@ -75,6 +76,7 @@ fn len_empty_full() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn try_recv() {
     let r = after(ms(200));
     assert!(r.try_recv().is_err());
@@ -91,6 +93,7 @@ fn try_recv() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn recv() {
     let start = Instant::now();
     let r = after(ms(50));
@@ -107,6 +110,7 @@ fn recv() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn recv_timeout() {
     let start = Instant::now();
     let r = after(ms(200));
@@ -151,6 +155,7 @@ fn recv_two() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn recv_race() {
     select! {
         recv(after(ms(50))) -> _ => {}

@@ -2,8 +2,7 @@
 //
 // Source: https://github.com/rust-lang/rust/blob/8e9c93df464b7ada3fc7a1c8ccddd9dcb24ee0a0/library/std/src/sync/once_lock.rs
 
-use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 use std::sync::Once;
 
 pub(crate) struct OnceLock<T> {
@@ -82,7 +81,9 @@ impl<T> Drop for OnceLock<T> {
     fn drop(&mut self) {
         if self.once.is_completed() {
             // SAFETY: The inner value has been initialized
-            unsafe { (*self.value.get()).assume_init_drop() };
+            // assume_init_drop requires Rust 1.60
+            // unsafe { (*self.value.get()).assume_init_drop() };
+            unsafe { self.value.get().cast::<T>().drop_in_place() };
         }
     }
 }

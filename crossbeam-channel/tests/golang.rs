@@ -11,16 +11,20 @@
 
 #![allow(clippy::redundant_clone)]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::any::Any;
-use std::cell::Cell;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering::SeqCst};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    any::Any,
+    cell::Cell,
+    collections::HashMap,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicI32, AtomicUsize, Ordering::SeqCst},
+    },
+    thread,
+    time::Duration,
+};
 
-use crossbeam_channel::{bounded, never, select, tick, unbounded, Receiver, Select, Sender};
+use crossbeam_channel::{Receiver, Select, Sender, bounded, never, select, tick, unbounded};
 
 fn ms(ms: u64) -> Duration {
     Duration::from_millis(ms)
@@ -265,10 +269,7 @@ macro_rules! go {
 mod doubleselect {
     use super::*;
 
-    #[cfg(miri)]
-    const ITERATIONS: i32 = 100;
-    #[cfg(not(miri))]
-    const ITERATIONS: i32 = 10_000;
+    const ITERATIONS: i32 = if cfg!(miri) { 100 } else { 10_000 };
 
     fn sender(n: i32, c1: Chan<i32>, c2: Chan<i32>, c3: Chan<i32>, c4: Chan<i32>) {
         defer! { c1.close_s() }
@@ -727,10 +728,7 @@ mod select {
 mod select2 {
     use super::*;
 
-    #[cfg(miri)]
-    const N: i32 = 200;
-    #[cfg(not(miri))]
-    const N: i32 = 100000;
+    const N: i32 = if cfg!(miri) { 200 } else { 100000 };
 
     #[test]
     fn main() {
@@ -965,15 +963,9 @@ mod chan_test {
 
     #[test]
     fn test_chan() {
-        #[cfg(miri)]
-        const N: i32 = 12;
-        #[cfg(not(miri))]
-        const N: i32 = 200;
+        const N: i32 = if cfg!(miri) { 12 } else { 200 };
 
-        #[cfg(miri)]
-        const MESSAGES_COUNT: i32 = 20;
-        #[cfg(not(miri))]
-        const MESSAGES_COUNT: i32 = 100;
+        const MESSAGES_COUNT: i32 = if cfg!(miri) { 20 } else { 100 };
 
         for cap in 0..N {
             {
@@ -1112,10 +1104,7 @@ mod chan_test {
 
     #[test]
     fn test_nonblock_recv_race() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 1000;
+        const N: usize = if cfg!(miri) { 100 } else { 1000 };
 
         for _ in 0..N {
             let c = make::<i32>(1);
@@ -1136,10 +1125,7 @@ mod chan_test {
 
     #[test]
     fn test_nonblock_select_race() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 1000;
+        const N: usize = if cfg!(miri) { 100 } else { 1000 };
 
         let done = make::<bool>(1);
         for _ in 0..N {
@@ -1172,10 +1158,7 @@ mod chan_test {
 
     #[test]
     fn test_nonblock_select_race2() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 1000;
+        const N: usize = if cfg!(miri) { 100 } else { 1000 };
 
         let done = make::<bool>(1);
         for _ in 0..N {
@@ -1211,10 +1194,7 @@ mod chan_test {
         // Ensure that send/recv on the same chan in select
         // does not crash nor deadlock.
 
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 1000;
+        const N: usize = if cfg!(miri) { 100 } else { 1000 };
 
         for &cap in &[0, 10] {
             let wg = WaitGroup::new();
@@ -1253,10 +1233,7 @@ mod chan_test {
 
     #[test]
     fn test_select_stress() {
-        #[cfg(miri)]
-        const N: usize = 100;
-        #[cfg(not(miri))]
-        const N: usize = 10000;
+        const N: usize = if cfg!(miri) { 100 } else { 10000 };
 
         let c = vec![
             make::<i32>(0),
@@ -1362,10 +1339,7 @@ mod chan_test {
 
     #[test]
     fn test_select_fairness() {
-        #[cfg(miri)]
-        const TRIALS: usize = 100;
-        #[cfg(not(miri))]
-        const TRIALS: usize = 10000;
+        const TRIALS: usize = if cfg!(miri) { 100 } else { 10000 };
 
         let c1 = make::<u8>(TRIALS + 1);
         let c2 = make::<u8>(TRIALS + 1);
@@ -1448,10 +1422,7 @@ mod chan_test {
 
     #[test]
     fn test_pseudo_random_send() {
-        #[cfg(miri)]
-        const N: usize = 20;
-        #[cfg(not(miri))]
-        const N: usize = 100;
+        const N: usize = if cfg!(miri) { 20 } else { 100 };
 
         for cap in 0..N {
             let c = make::<i32>(cap);
@@ -1494,10 +1465,7 @@ mod chan_test {
     #[test]
     fn test_multi_consumer() {
         const NWORK: usize = 23;
-        #[cfg(miri)]
-        const NITER: usize = 50;
-        #[cfg(not(miri))]
-        const NITER: usize = 271828;
+        const NITER: usize = if cfg!(miri) { 50 } else { 271828 };
 
         let pn = [2, 3, 7, 11, 13, 17, 19, 23, 27, 31];
 
@@ -2090,10 +2058,7 @@ mod chan1 {
     use super::*;
 
     // sent messages
-    #[cfg(miri)]
-    const N: usize = 20;
-    #[cfg(not(miri))]
-    const N: usize = 1000;
+    const N: usize = if cfg!(miri) { 20 } else { 1000 };
     // receiving "goroutines"
     const M: usize = 10;
     // channel buffering

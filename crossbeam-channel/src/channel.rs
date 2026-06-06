@@ -1,19 +1,22 @@
 //! The channel interface.
 
-use std::fmt;
-use std::iter::FusedIterator;
-use std::mem;
-use std::panic::{RefUnwindSafe, UnwindSafe};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use crate::context::Context;
-use crate::counter;
-use crate::err::{
-    RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError,
+use alloc::sync::Arc;
+use core::{
+    fmt,
+    iter::FusedIterator,
+    mem,
+    panic::{RefUnwindSafe, UnwindSafe},
+    time::Duration,
 };
-use crate::flavors;
-use crate::select::{Operation, SelectHandle, Token};
+use std::time::Instant;
+
+use crate::{
+    context::Context,
+    counter,
+    err::{RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError},
+    flavors,
+    select::{Operation, SelectHandle, Token},
+};
 
 /// Creates a multi-producer multi-consumer channel of unbounded capacity.
 ///
@@ -155,6 +158,7 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
 /// When the message gets sent:
 ///
 /// ```
+/// # if cfg!(gha_macos_runner) { return; } // GitHub-hosted macOS runner is slow
 /// use std::thread;
 /// use std::time::{Duration, Instant};
 /// use crossbeam_channel::after;
@@ -268,7 +272,7 @@ pub fn at(when: Instant) -> Receiver<Instant> {
 /// }
 /// # t.join().unwrap(); // join thread to avoid https://github.com/rust-lang/miri/issues/1371
 /// ```
-pub fn never<T>() -> Receiver<T> {
+pub const fn never<T>() -> Receiver<T> {
     Receiver {
         flavor: ReceiverFlavor::Never(flavors::never::Channel::new()),
     }
@@ -300,6 +304,7 @@ pub fn never<T>() -> Receiver<T> {
 /// When messages get sent:
 ///
 /// ```
+/// # if cfg!(gha_macos_runner) { return; } // GitHub-hosted macOS runner is slow
 /// use std::thread;
 /// use std::time::{Duration, Instant};
 /// use crossbeam_channel::tick;
@@ -656,6 +661,14 @@ impl<T> Sender<T> {
             _ => false,
         }
     }
+
+    pub(crate) fn addr(&self) -> usize {
+        match &self.flavor {
+            SenderFlavor::Array(a) => a.addr(),
+            SenderFlavor::List(a) => a.addr(),
+            SenderFlavor::Zero(a) => a.addr(),
+        }
+    }
 }
 
 impl<T> Drop for Sender<T> {
@@ -891,7 +904,9 @@ impl<T> Receiver<T> {
     ///
     /// If the channel is empty and not disconnected, this call will block until the receive
     /// operation can proceed or the operation times out. If the channel is empty and becomes
-    /// disconnected, this call will wake up and return an error.
+    /// disconnected, this call will wake up and return an error. If the channel is non-empty
+    /// and the deadline has already been reached, the next message in the channel will be
+    /// returned.
     ///
     /// If called on a zero-capacity channel, this method will wait for a send operation to appear
     /// on the other side of the channel.
@@ -1151,6 +1166,17 @@ impl<T> Receiver<T> {
             (ReceiverFlavor::Tick(a), ReceiverFlavor::Tick(b)) => Arc::ptr_eq(a, b),
             (ReceiverFlavor::Never(_), ReceiverFlavor::Never(_)) => true,
             _ => false,
+        }
+    }
+
+    pub(crate) fn addr(&self) -> usize {
+        match &self.flavor {
+            ReceiverFlavor::Array(chan) => chan.addr(),
+            ReceiverFlavor::List(chan) => chan.addr(),
+            ReceiverFlavor::Zero(chan) => chan.addr(),
+            ReceiverFlavor::At(chan) => Arc::as_ptr(chan) as usize,
+            ReceiverFlavor::Tick(chan) => Arc::as_ptr(chan) as usize,
+            ReceiverFlavor::Never(_chan) => 0,
         }
     }
 }

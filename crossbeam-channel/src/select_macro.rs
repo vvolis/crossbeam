@@ -90,7 +90,7 @@ macro_rules! crossbeam_channel_internal {
     };
     // Print an error if there is a semicolon after the block.
     (@list
-        ($case:ident $args:tt $(-> $res:pat)* => $body:block; $($tail:tt)*)
+        ($case:ident $args:tt $(-> $res:pat)* => { $($body:tt)* }; $($tail:tt)*)
         ($($head:tt)*)
     ) => {
         compile_error!(
@@ -98,6 +98,16 @@ macro_rules! crossbeam_channel_internal {
         )
     };
     // The first case is separated by a comma.
+    (@list
+        ($case:ident ($($args:tt)*) $(-> $res:pat)* => { $($body:tt)* }, $($tail:tt)*)
+        ($($head:tt)*)
+    ) => {
+        $crate::crossbeam_channel_internal!(
+            @list
+            ($($tail)*)
+            ($($head)* $case ($($args)*) $(-> $res)* => { $($body)* },)
+        )
+    };
     (@list
         ($case:ident ($($args:tt)*) $(-> $res:pat)* => $body:expr, $($tail:tt)*)
         ($($head:tt)*)
@@ -110,13 +120,13 @@ macro_rules! crossbeam_channel_internal {
     };
     // Don't require a comma after the case if it has a proper block.
     (@list
-        ($case:ident ($($args:tt)*) $(-> $res:pat)* => $body:block $($tail:tt)*)
+        ($case:ident ($($args:tt)*) $(-> $res:pat)* => { $($body:tt)* } $($tail:tt)*)
         ($($head:tt)*)
     ) => {
         $crate::crossbeam_channel_internal!(
             @list
             ($($tail)*)
-            ($($head)* $case ($($args)*) $(-> $res)* => { $body },)
+            ($($head)* $case ($($args)*) $(-> $res)* => { $($body)* },)
         )
     };
     // Only one case remains.
@@ -688,7 +698,7 @@ macro_rules! crossbeam_channel_internal {
         let _handle: &dyn $crate::internal::SelectHandle = &$crate::never::<()>();
 
         #[allow(unused_mut, clippy::zero_repeat_side_effects)]
-        let mut _sel = [(_handle, 0, ::std::ptr::null()); _LEN];
+        let mut _sel = [(_handle, 0, 0); _LEN];
 
         $crate::crossbeam_channel_internal!(
             @add
@@ -852,7 +862,7 @@ macro_rules! crossbeam_channel_internal {
                     }
                     unbind(_r)
                 };
-                $sel[$i] = ($var, $i, $var as *const $crate::Receiver<_> as *const u8);
+                $sel[$i] = ($var, $i, $crate::internal::receiver_addr($var));
 
                 $crate::crossbeam_channel_internal!(
                     @add
@@ -884,7 +894,7 @@ macro_rules! crossbeam_channel_internal {
                     }
                     unbind(_s)
                 };
-                $sel[$i] = ($var, $i, $var as *const $crate::Sender<_> as *const u8);
+                $sel[$i] = ($var, $i, $crate::internal::sender_addr($var));
 
                 $crate::crossbeam_channel_internal!(
                     @add
@@ -985,7 +995,7 @@ macro_rules! crossbeam_channel_internal {
 ///
 /// This macro allows you to define a set of channel operations, wait until any one of them becomes
 /// ready, and finally execute it. If multiple operations are ready at the same time, a random one
-/// among them is selected (i.e. the unbiased selection). Use `select_biased!` for the biased
+/// among them is selected (i.e. the unbiased selection). Use [`select_biased!`] for the biased
 /// selection.
 ///
 /// It is also possible to define a `default` case that gets executed if none of the operations are
@@ -998,6 +1008,7 @@ macro_rules! crossbeam_channel_internal {
 /// dynamically created list of channel operations.
 ///
 /// [`Select`]: super::Select
+/// [`select_biased!`]: super::select_biased
 ///
 /// # Examples
 ///
@@ -1085,6 +1096,7 @@ macro_rules! crossbeam_channel_internal {
 /// Optionally add a receive operation to `select!` using [`never`]:
 ///
 /// ```
+/// # #[allow(clippy::unnecessary_literal_unwrap)] {
 /// use std::thread;
 /// use std::time::Duration;
 /// use crossbeam_channel::{select, never, unbounded};
@@ -1113,6 +1125,7 @@ macro_rules! crossbeam_channel_internal {
 /// }
 /// # t1.join().unwrap(); // join thread to avoid https://github.com/rust-lang/miri/issues/1371
 /// # t2.join().unwrap(); // join thread to avoid https://github.com/rust-lang/miri/issues/1371
+/// # }
 /// ```
 ///
 /// To optionally add a timeout to `select!`, see the [example] for [`never`].

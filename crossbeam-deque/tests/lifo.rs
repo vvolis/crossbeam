@@ -1,11 +1,13 @@
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+};
 
-use crossbeam_deque::Steal::{Empty, Success};
-use crossbeam_deque::Worker;
+use crossbeam_deque::{
+    Steal::{Empty, Success},
+    Worker,
+};
 use crossbeam_utils::thread::scope;
-use rand::Rng;
 
 #[test]
 fn smoke() {
@@ -71,10 +73,7 @@ fn is_empty() {
 
 #[test]
 fn spsc() {
-    #[cfg(miri)]
-    const STEPS: usize = 500;
-    #[cfg(not(miri))]
-    const STEPS: usize = 50_000;
+    const STEPS: usize = if cfg!(miri) { 500 } else { 50_000 };
 
     let w = Worker::new_lifo();
     let s = w.stealer();
@@ -105,10 +104,7 @@ fn spsc() {
 #[test]
 fn stampede() {
     const THREADS: usize = 8;
-    #[cfg(miri)]
-    const COUNT: usize = 500;
-    #[cfg(not(miri))]
-    const COUNT: usize = 50_000;
+    const COUNT: usize = if cfg!(miri) { 500 } else { 50_000 };
 
     let w = Worker::new_lifo();
 
@@ -149,10 +145,7 @@ fn stampede() {
 #[test]
 fn stress() {
     const THREADS: usize = 8;
-    #[cfg(miri)]
-    const COUNT: usize = 500;
-    #[cfg(not(miri))]
-    const COUNT: usize = 50_000;
+    const COUNT: usize = if cfg!(miri) { 500 } else { 50_000 };
 
     let w = Worker::new_lifo();
     let done = Arc::new(AtomicBool::new(false));
@@ -185,10 +178,10 @@ fn stress() {
             });
         }
 
-        let mut rng = rand::thread_rng();
+        let mut rng = fastrand::Rng::new();
         let mut expected = 0;
         while expected < COUNT {
-            if rng.gen_range(0..3) == 0 {
+            if rng.u8(0..3) == 0 {
                 while w.pop().is_some() {
                     hits.fetch_add(1, SeqCst);
                 }
@@ -246,11 +239,11 @@ fn no_starvation() {
             });
         }
 
-        let mut rng = rand::thread_rng();
+        let mut rng = fastrand::Rng::new();
         let mut my_hits = 0;
         loop {
-            for i in 0..rng.gen_range(0..COUNT) {
-                if rng.gen_range(0..3) == 0 && my_hits == 0 {
+            for i in 0..rng.usize(0..COUNT) {
+                if rng.u8(0..3) == 0 && my_hits == 0 {
                     while w.pop().is_some() {
                         my_hits += 1;
                     }
@@ -270,18 +263,9 @@ fn no_starvation() {
 
 #[test]
 fn destructors() {
-    #[cfg(miri)]
-    const THREADS: usize = 2;
-    #[cfg(not(miri))]
-    const THREADS: usize = 8;
-    #[cfg(miri)]
-    const COUNT: usize = 500;
-    #[cfg(not(miri))]
-    const COUNT: usize = 50_000;
-    #[cfg(miri)]
-    const STEPS: usize = 100;
-    #[cfg(not(miri))]
-    const STEPS: usize = 1000;
+    const THREADS: usize = if cfg!(miri) { 2 } else { 8 };
+    const COUNT: usize = if cfg!(miri) { 500 } else { 50_000 };
+    const STEPS: usize = if cfg!(miri) { 100 } else { 1000 };
 
     struct Elem(usize, Arc<Mutex<Vec<usize>>>);
 

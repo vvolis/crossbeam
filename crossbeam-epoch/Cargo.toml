@@ -6,13 +6,22 @@ name = "crossbeam-epoch"
 # - Run './tools/publish.sh crossbeam-epoch <version>'
 version = "0.9.18"
 edition = "2021"
-rust-version = "1.61"
+# NB: Sync with msrv badge and "Compatibility" section in README.md
+rust-version = "1.74"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/crossbeam-rs/crossbeam"
 homepage = "https://github.com/crossbeam-rs/crossbeam/tree/master/crossbeam-epoch"
 description = "Epoch-based garbage collection"
 keywords = ["lock-free", "rcu", "atomic", "garbage"]
 categories = ["concurrency", "memory-management", "no-std"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[package.metadata.cargo_check_external_types]
+# The following are external types that are allowed to be exposed in our public API.
+allowed_external_types = [
+]
 
 [features]
 default = ["std"]
@@ -34,7 +43,7 @@ alloc = []
 loom = ["loom-crate", "crossbeam-utils/loom"]
 
 [dependencies]
-crossbeam-utils = { version = "0.8.18", path = "../crossbeam-utils", default-features = false }
+crossbeam-utils = { version = "0.8.18", path = "../crossbeam-utils", default-features = false, features = ["atomic"] }
 
 # Enable the use of loom for concurrency testing.
 #
@@ -44,7 +53,7 @@ crossbeam-utils = { version = "0.8.18", path = "../crossbeam-utils", default-fea
 loom-crate = { package = "loom", version = "0.7.1", optional = true }
 
 [dev-dependencies]
-rand = "0.8"
+fastrand = "2"
 
 [lints]
 workspace = true

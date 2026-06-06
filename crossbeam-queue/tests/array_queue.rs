@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::thread::scope;
-use rand::{thread_rng, Rng};
 
 #[test]
 fn smoke() {
@@ -58,15 +57,39 @@ fn len_empty_full() {
 }
 
 #[test]
+fn exclusive_reference() {
+    let mut q = ArrayQueue::new(2);
+
+    assert_eq!(q.len(), 0);
+    assert!(q.is_empty());
+
+    q.push_mut(()).unwrap();
+
+    assert_eq!(q.len(), 1);
+    assert!(!q.is_empty());
+    assert!(!q.is_full());
+
+    q.push_mut(()).unwrap();
+
+    assert_eq!(q.len(), 2);
+    assert!(!q.is_empty());
+    assert!(q.is_full());
+
+    q.pop_mut().unwrap();
+
+    assert_eq!(q.len(), 1);
+    assert!(!q.is_empty());
+    assert!(!q.is_full());
+
+    q.pop().unwrap();
+
+    assert_eq!(q.len(), 0);
+}
+
+#[test]
 fn len() {
-    #[cfg(miri)]
-    const COUNT: usize = 30;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
-    #[cfg(miri)]
-    const CAP: usize = 40;
-    #[cfg(not(miri))]
-    const CAP: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 30 } else { 25_000 };
+    const CAP: usize = if cfg!(miri) { 40 } else { 1000 };
     const ITERS: usize = CAP / 20;
 
     let q = ArrayQueue::new(CAP);
@@ -123,10 +146,7 @@ fn len() {
 
 #[test]
 fn spsc() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 100_000 };
 
     let q = ArrayQueue::new(3);
 
@@ -154,23 +174,22 @@ fn spsc() {
 
 #[test]
 fn spsc_ring_buffer() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 100_000 };
 
     let t = AtomicUsize::new(1);
     let q = ArrayQueue::<usize>::new(3);
     let v = (0..COUNT).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>();
 
     scope(|scope| {
-        scope.spawn(|_| loop {
-            match t.load(Ordering::SeqCst) {
-                0 if q.is_empty() => break,
+        scope.spawn(|_| {
+            loop {
+                match t.load(Ordering::SeqCst) {
+                    0 if q.is_empty() => break,
 
-                _ => {
-                    while let Some(n) = q.pop() {
-                        v[n].fetch_add(1, Ordering::SeqCst);
+                    _ => {
+                        while let Some(n) = q.pop() {
+                            v[n].fetch_add(1, Ordering::SeqCst);
+                        }
                     }
                 }
             }
@@ -195,10 +214,7 @@ fn spsc_ring_buffer() {
 
 #[test]
 fn mpmc() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 25_000 };
     const THREADS: usize = 4;
 
     let q = ArrayQueue::<usize>::new(3);
@@ -234,10 +250,7 @@ fn mpmc() {
 
 #[test]
 fn mpmc_ring_buffer() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 25_000 };
     const THREADS: usize = 4;
 
     let t = AtomicUsize::new(THREADS);
@@ -246,13 +259,15 @@ fn mpmc_ring_buffer() {
 
     scope(|scope| {
         for _ in 0..THREADS {
-            scope.spawn(|_| loop {
-                match t.load(Ordering::SeqCst) {
-                    0 if q.is_empty() => break,
+            scope.spawn(|_| {
+                loop {
+                    match t.load(Ordering::SeqCst) {
+                        0 if q.is_empty() => break,
 
-                    _ => {
-                        while let Some(n) = q.pop() {
-                            v[n].fetch_add(1, Ordering::SeqCst);
+                        _ => {
+                            while let Some(n) = q.pop() {
+                                v[n].fetch_add(1, Ordering::SeqCst);
+                            }
                         }
                     }
                 }
@@ -295,11 +310,11 @@ fn drops() {
         }
     }
 
-    let mut rng = thread_rng();
+    let mut rng = fastrand::Rng::new();
 
     for _ in 0..runs {
-        let steps = rng.gen_range(0..steps);
-        let additional = rng.gen_range(0..additional);
+        let steps = rng.usize(0..steps);
+        let additional = rng.usize(0..additional);
 
         DROPS.store(0, Ordering::SeqCst);
         let q = ArrayQueue::new(50);
@@ -333,10 +348,7 @@ fn drops() {
 
 #[test]
 fn linearizable() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 25_000 };
     const THREADS: usize = 4;
 
     let q = ArrayQueue::new(THREADS);

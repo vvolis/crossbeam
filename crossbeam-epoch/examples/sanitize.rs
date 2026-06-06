@@ -1,20 +1,25 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{
+            AtomicUsize,
+            Ordering::{AcqRel, Acquire, Relaxed},
+        },
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use crossbeam_epoch::{self as epoch, Atomic, Collector, LocalHandle, Owned, Shared};
-use rand::Rng;
 
 fn worker(a: Arc<Atomic<AtomicUsize>>, handle: LocalHandle) -> usize {
-    let mut rng = rand::thread_rng();
+    let mut rng = fastrand::Rng::new();
     let mut sum = 0;
 
-    if rng.gen() {
+    if rng.bool() {
         thread::sleep(Duration::from_millis(1));
     }
-    let timeout = Duration::from_millis(rng.gen_range(0..10));
+    let timeout = Duration::from_millis(rng.u64(0..10));
     let now = Instant::now();
 
     while now.elapsed() < timeout {
@@ -22,7 +27,7 @@ fn worker(a: Arc<Atomic<AtomicUsize>>, handle: LocalHandle) -> usize {
             let guard = &handle.pin();
             guard.flush();
 
-            let val = if rng.gen() {
+            let val = if rng.bool() {
                 let p = a.swap(Owned::new(AtomicUsize::new(sum)), AcqRel, guard);
                 unsafe {
                     guard.defer_destroy(p);

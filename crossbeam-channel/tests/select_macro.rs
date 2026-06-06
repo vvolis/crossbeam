@@ -3,14 +3,18 @@
 #![forbid(unsafe_code)] // select! is safe.
 #![allow(clippy::match_single_binding)]
 
-use std::any::Any;
-use std::cell::Cell;
-use std::ops::Deref;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    any::Any,
+    cell::Cell,
+    ops::Deref,
+    thread,
+    time::{Duration, Instant},
+};
 
-use crossbeam_channel::{after, bounded, never, select, select_biased, tick, unbounded};
-use crossbeam_channel::{Receiver, RecvError, SendError, Sender, TryRecvError};
+use crossbeam_channel::{
+    Receiver, RecvError, SendError, Sender, TryRecvError, after, bounded, never, select,
+    select_biased, tick, unbounded,
+};
 use crossbeam_utils::thread::scope;
 
 fn ms(ms: u64) -> Duration {
@@ -211,6 +215,7 @@ fn default_when_disconnected() {
 }
 
 #[test]
+#[cfg_attr(gha_macos_runner, ignore = "GitHub-hosted macOS runner is slow")]
 fn default_only() {
     let start = Instant::now();
     select! {
@@ -294,27 +299,31 @@ fn loop_try() {
         let (s_end, r_end) = bounded::<()>(0);
 
         scope(|scope| {
-            scope.spawn(|_| loop {
-                select! {
-                    send(s1, 1) -> _ => break,
-                    default => {}
-                }
+            scope.spawn(|_| {
+                loop {
+                    select! {
+                        send(s1, 1) -> _ => break,
+                        default => {}
+                    }
 
-                select! {
-                    recv(r_end) -> _ => break,
-                    default => {}
+                    select! {
+                        recv(r_end) -> _ => break,
+                        default => {}
+                    }
                 }
             });
 
-            scope.spawn(|_| loop {
-                if let Ok(x) = r2.try_recv() {
-                    assert_eq!(x, 2);
-                    break;
-                }
+            scope.spawn(|_| {
+                loop {
+                    if let Ok(x) = r2.try_recv() {
+                        assert_eq!(x, 2);
+                        break;
+                    }
 
-                select! {
-                    recv(r_end) -> _ => break,
-                    default => {}
+                    select! {
+                        recv(r_end) -> _ => break,
+                        default => {}
+                    }
                 }
             });
 
@@ -486,10 +495,7 @@ fn panic_receiver() {
 
 #[test]
 fn stress_recv() {
-    #[cfg(miri)]
-    const COUNT: usize = 50;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 10_000 };
 
     let (s1, r1) = unbounded();
     let (s2, r2) = bounded(5);
@@ -522,10 +528,7 @@ fn stress_recv() {
 
 #[test]
 fn stress_send() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -555,10 +558,7 @@ fn stress_send() {
 
 #[test]
 fn stress_mixed() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded(0);
     let (s2, r2) = bounded(0);
@@ -691,10 +691,7 @@ fn matching_with_leftover() {
 
 #[test]
 fn channel_through_channel() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 1000 };
 
     type T = Box<dyn Any + Send>;
 
@@ -739,10 +736,7 @@ fn channel_through_channel() {
 
 #[test]
 fn linearizable_default() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 100_000 };
 
     for step in 0..2 {
         let (start_s, start_r) = bounded::<()>(0);
@@ -786,10 +780,7 @@ fn linearizable_default() {
 
 #[test]
 fn linearizable_timeout() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 100_000 };
 
     for step in 0..2 {
         let (start_s, start_r) = bounded::<()>(0);
@@ -833,10 +824,7 @@ fn linearizable_timeout() {
 
 #[test]
 fn fairness1() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded::<()>(COUNT);
     let (s2, r2) = unbounded::<()>();
@@ -858,13 +846,10 @@ fn fairness1() {
     assert!(hits.iter().all(|x| *x >= COUNT / hits.len() / 2));
 }
 
-#[cfg_attr(crossbeam_sanitize, ignore)] // TODO: flaky: https://github.com/crossbeam-rs/crossbeam/issues/1094
 #[test]
+#[cfg_attr(crossbeam_sanitize, ignore)] // TODO: flaky: https://github.com/crossbeam-rs/crossbeam/issues/1094
 fn fairness2() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = unbounded::<()>();
     let (s2, r2) = bounded::<()>(1);
@@ -901,10 +886,7 @@ fn fairness2() {
 
 #[test]
 fn fairness_recv() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = bounded::<()>(COUNT);
     let (s2, r2) = unbounded::<()>();
@@ -926,10 +908,7 @@ fn fairness_recv() {
 
 #[test]
 fn fairness_send() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, _r1) = bounded::<()>(COUNT);
     let (s2, _r2) = unbounded::<()>();
@@ -946,10 +925,7 @@ fn fairness_send() {
 
 #[test]
 fn unfairness() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = unbounded::<()>();
     let (s2, r2) = unbounded::<()>();
@@ -983,10 +959,7 @@ fn unfairness() {
 
 #[test]
 fn unfairness_timeout() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = unbounded::<()>();
     let (s2, r2) = unbounded::<()>();
@@ -1022,10 +995,7 @@ fn unfairness_timeout() {
 
 #[test]
 fn unfairness_try() {
-    #[cfg(miri)]
-    const COUNT: usize = 100;
-    #[cfg(not(miri))]
-    const COUNT: usize = 10_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     let (s1, r1) = unbounded::<()>();
     let (s2, r2) = unbounded::<()>();
